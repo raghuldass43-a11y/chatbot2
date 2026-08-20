@@ -1444,8 +1444,8 @@ function ackReply(lang) {
   return "You're welcome! Let me know if you'd like more colleges, a comparison, or anything else about TNEA counselling.";
 }
 function fallbackReply(lang) {
-  if (lang === "tanglish") return "Naan ippo TNEA counselling mattum education related questions la focus pannuren. Colleges, branches, cutoff, counselling, admission pathi kelunga.";
-  return "I'm currently focused on TNEA counselling and education-related questions. Try asking me about colleges, branches, cutoffs, counselling, or admissions.";
+  if (lang === "tanglish") return "Adha exact-a puriyala — but colleges, cutoff, branches, TNEA counselling pathi kelunga, naan help pannuren. (Idhu offline mode — full AI understanding-ku Gemini connect aagaathu irukkalam.)";
+  return "I couldn't quite understand that — ask me about colleges, cutoffs, branches, or TNEA counselling and I'll help. (This is the offline fallback — full understanding needs the Gemini connection, which seems unavailable right now.)";
 }
 function needCutoffReply(lang) {
   if (lang === "tanglish") return "Realistic options search panna unga TNEA cutoff mark (200ku) mattum category venum — unga cutoff enna?";
@@ -1945,7 +1945,7 @@ function buildGeminiSystemPrompt(lang) {
 
 For ANY question about actual colleges, cutoffs, fees, branches, districts, or the student's saved choice list, you MUST call the matching tool and base your answer only on what it returns. NEVER state a college name, cutoff number, fee amount, branch availability, or recommendation from your own knowledge — you have no access to the real dataset outside these tools, and inventing any of that is a serious error.
 
-For general questions not covered by the tools (e.g. "What is TNEA?", "What is CSE?", "What is GitHub?", how TNEA counselling works, general career/branch explanations, greetings, small talk), answer directly and helpfully yourself — do not call a tool for these.
+For general questions not covered by the tools — this includes TNEA/education topics ("What is TNEA?", "What is CSE?", how counselling or choice filling works) but is NOT limited to them — answer directly and helpfully yourself, the way a knowledgeable general-purpose assistant would, exactly as Gemini or ChatGPT would answer the same question. Don't call a tool for these, and don't deflect a question as "outside scope" just because it isn't about TNEA — you are this app's full conversational assistant, not a narrow TNEA-only bot. The one hard boundary is factual claims about the real TNEA dataset itself (specific college names, cutoffs, fees, branch availability) — those must always come from a tool call, never from your own knowledge, exactly as described above.
 
 Conversation memory: the student's profile saved so far this session is: ${knownProfile}. Combine this with anything new in the latest message before calling a tool — e.g. if cutoff/category/branch were given in earlier turns and the student now just says "government college in Chennai", call search_colleges with the cutoff/category/branch already known PLUS college_preference=Government and district=Chennai. Never ask the student to repeat information already in their profile or this conversation. Whenever the student states a new cutoff/category/branch/location/college-type preference (even a one-word reply like "BC" or "CSE"), call update_student_profile to save it (you can do this in the same turn as calling search_colleges).
 
@@ -1983,9 +1983,16 @@ async function callGeminiBackend(contents, systemText) {
       signal: controller.signal,
       body: JSON.stringify({ contents, system: systemText, tools: GEMINI_TOOL_DECLARATIONS })
     });
-    if (!res.ok) throw new Error(`Gemini backend responded ${res.status}`);
+    if (!res.ok) {
+      // Surface the backend's own diagnostic body (added in api/chat.js) in the console so
+      // DevTools shows the real cause (missing key, bad model, quota) instead of just a status code.
+      const errBody = await res.json().catch(() => null);
+      const detail = errBody ? (errBody.geminiMessage || errBody.error || JSON.stringify(errBody)) : "";
+      throw new Error(`Gemini backend responded ${res.status}${detail ? " — " + detail : ""}`);
+    }
     const data = await res.json();
     if (!data || !Array.isArray(data.parts)) throw new Error("Malformed response from Gemini backend");
+    if (!data.parts.length && data.blockReason) throw new Error(`Gemini blocked the response (${data.blockReason})`);
     return data.parts;
   } finally {
     clearTimeout(timer);
